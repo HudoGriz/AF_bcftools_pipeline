@@ -89,7 +89,7 @@ params {
     input        = "/path/to/folder/with/vcfs/"
     output_stats = "/home/mireia/GitHub/bcftools-pipeline/bcftools-pipeline"
     sceVCF_path  = "/path/to/sceVCF_binaries"
-    metadata_csv = "/path/to/metadata.csv"
+    metadata_csv = "/path/to/metadata.csv"  // sample/sex/ancestry
     seq_type     = "WGS" // or "WES"
     threads      = 4
 
@@ -214,6 +214,8 @@ After a successful execution, you'll find inside the */work* folder:
 
 - Variant and Sample-filtered with masked genotypes VCFs
 
+- sample-qc-fails.tsv file with the samples deleted and which filter step failed
+
 **Final output**
 
 * *input_vcf_baseName*.vcf.gz (TODO: make the name the same as the original VCF with -AF_recalc) → fully filtered VCF with allele frequency annotations and witout sample level information. 
@@ -236,9 +238,16 @@ Example a of nextflow output:
 [33/a6c930] process > SAMPLE_QC (test_split-multiallelic-masked-filtered.vcf.gz)         [100%] 1 of 1 ✔
 [c7/065171] process > ADD_AF (test_split-multiallelic-masked-filtered.sample_qc.vcf.bgz) [100%] 1 of 1 ✔
 ```
+
+The intermediate files are saved inside the nextflow folder for each step. 
+
 Go to /work/bc/56f27a[-->] and you'll find the VCF with the multiallelic variants splitted.
 
+Go to /work/33/a6c930[-->] and you'll find all the intermediate files created during the sample QC.
+
 Go to /work/c7/065171[-->] for the final files of the pipeline. 
+
+**Recomendation:** Use at least the argument `-with-report report.html`, this will always show you the folders where the files have been saved.
 
 ## How to generate metadata_csv
 

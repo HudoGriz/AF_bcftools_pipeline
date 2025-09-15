@@ -37,7 +37,7 @@ process INDEX_VCF {
         {
           echo " === EGA BCFTools Pipeline ==="
           echo "Developed by: Mireia Marin Ginestar (mireia.marin@crg.eu)"
-          echo "version 1.0.0"
+          echo "version 2.0.0"
           echo ""
           echo "✓ Index already exists for ${vcf}"
           echo ""
@@ -56,7 +56,7 @@ process INDEX_VCF {
         {
           echo " === EGA BCFTools Pipeline ==="
           echo "Developed by: Mireia Marin Ginestar (mireia.marin@crg.eu)"
-          echo "version 1.0.0"
+          echo "version 2.0.0"
           echo ""
           echo "✓ Index created for ${vcf}"
           echo ""
@@ -154,7 +154,7 @@ process GENOTYPE_QC {
     declare -A gt_conditions=(
       [GQ]='FMT/GQ < ${params.qc.genotype.gq_threshold}'
       [DP]='FMT/DP < ${params.qc.genotype.dp_threshold}'
-      [AD]='(FMT/AD[0]+FMT/AD[1])>0 && (FMT/AD[1]/(FMT/AD[0]+FMT/AD[1])) < ${params.qc.genotype.ad_ratio_threshold}'
+      [AD]='(FMT/AD[*:0]+FMT/AD[*:1])>0 && (FMT/AD[*:1]/(FMT/AD[*:0]+FMT/AD[*:1])) < ${params.qc.genotype.ab_ratio_threshold}'
     )
 
     {
@@ -372,164 +372,224 @@ process SAMPLE_QC {
       echo "✓ Seq type: WES thresholds applied" >> "${log_file}"
     fi
 
-    # Subset to PASS SNVs only for per-sample metrics (faster and cleaner)
-    SITE_SUBSET_CMD=(bcftools view --threads ${task.cpus} -f PASS -v snps "\$INPUT_VCF")
+    # Generate bcftools stats for the input VCF
+    echo "Generating bcftools stats..." >> "${log_file}"
+    bcftools query -l "\$INPUT_VCF" > list-of-samples.txt
+    bcftools stats -S list-of-samples.txt "\$INPUT_VCF" > bcftools-stats.txt
 
-    # -----------------------------
-    # 1) Mean coverage (FORMAT/DP)
-    # -----------------------------
-    if bcftools view -h "\$INPUT_VCF" | grep -q "^##FORMAT=<ID=DP,"; then
-      echo "✓ DP (FORMAT) found — calculating mean coverage" >> "${log_file}"
-      "\${SITE_SUBSET_CMD[@]}" \
-      | bcftools query -f '[%SAMPLE\\t%DP\\n]' \
-      | awk '{sum[\$1]+=\$2; n[\$1]++} END{for(s in sum){if(n[s]>0) printf "%s\\t%.6f\\n",s,sum[s]/n[s]}}' \
-      > "\$TMP/mean_dp.txt"
-      awk -v thr="\$COV_THRESHOLD" '\$2 < thr {print \$1}' "\$TMP/mean_dp.txt" > "\$TMP/low_cov_samples.txt"
+    # --- detect FORMAT presence in the VCF header ---
+    DP_FOUND=\$(bcftools view -h "\$INPUT_VCF" | grep -c '^##FORMAT=<ID=DP,' || true)
+    GT_FOUND=\$(bcftools view -h "\$INPUT_VCF" | grep -c '^##FORMAT=<ID=GT,' || true)
+
+
+    if [[ "\$DP_FOUND" -gt 0 ]]; then
+      echo "✓ DP format found - Performing coverage filtering" >> "${log_file}"
     else
-      echo "x DP (FORMAT) not found — skipping mean coverage" >> "${log_file}"
-      : > "\$TMP/mean_dp.txt"; : > "\$TMP/low_cov_samples.txt"
+      echo "x DP format NOT found - Coverage filtering NOT performed" >> "${log_file}"
     fi
-
-    # -----------------------------
-    # 2) Call rate (FORMAT/GT)
-    # -----------------------------
-    GT_FOUND=\$(bcftools view -h "\$INPUT_VCF" | grep -c '^##FORMAT=<ID=GT,')
     if [[ "\$GT_FOUND" -gt 0 ]]; then
-      echo "✓ GT (FORMAT) found — calculating call rate" >> "${log_file}"
-      "\${SITE_SUBSET_CMD[@]}" \
-      | bcftools query -f '[%SAMPLE\\t%GT\\n]' \
-      | awk '{tot[\$1]++; if(\$2=="./."||\$2==".|.") miss[\$1]++} END{for(s in tot){cr=1-((miss[s]+0)/tot[s]); printf "%s\\t%.6f\\n",s,cr}}' \
-      > "\$TMP/call_rate.txt"
-      awk -v thr="\$CALL_RATE_THRESHOLD" '\$2 < thr {print \$1}' "\$TMP/call_rate.txt" > "\$TMP/low_call_rate.txt"
+      echo "✓ GT format found - Performing call rate, het/hom ratio and singleton filtering" >> "${log_file}"
     else
-      echo "x GT (FORMAT) not found — skipping call rate" >> "${log_file}"
-      : > "\$TMP/call_rate.txt"; : > "\$TMP/low_call_rate.txt"
+      echo "x GT format NOT found - Call rate, het/hom ratio and singleton filtering NOT performed" >> "${log_file}"
     fi
 
-    # -----------------------------
-    # 3) Het/Hom ratio (from GT)
-    #    het / hom_alt over PASS SNVs
-    # -----------------------------
-    if [[ "\$GT_FOUND" -gt 0 ]]; then
-      echo "✓ GT (FORMAT) found — calculating Het/Hom ratio" >> "${log_file}"
-      "\${SITE_SUBSET_CMD[@]}" \
-      | bcftools query -f '[%SAMPLE\\t%GT\\n]' \
-      | awk '{
-          g=\$2
-          if(g ~ /[01][\\/|][01]/) {
-            split(g,a,/[/|]/)
-            if(a[1]!=a[2]) het[\$1]++
-            else if(a[1]=="1") hom[\$1]++
-          }
-        }
-        END{
-          # het/hom_alt, handling zeros and pure-het edge cases
-          PROCINFO["sorted_in"]="@ind_str_asc"
-          for(s in het){
-            if(hom[s]>0) printf "%s\\t%.6f\\n",s,het[s]/hom[s];
-            else if(het[s]>0) printf "%s\\tinf\\n",s;
-            else printf "%s\\t0\\n",s;
-          }
-          for(s in hom) if(!(s in het)) printf "%s\\t0\\n",s;
-        }' \
-      > "\$TMP/het_hom.txt"
-      awk -v thr="\$HET_HOM_THRESHOLD" '\$2=="inf" || \$2+0 > thr {print \$1}' "\$TMP/het_hom.txt" > "\$TMP/bad_het_hom.txt"
-    else
-      echo "x GT (FORMAT) not found — skipping Het/Hom ratio" >> "${log_file}"
-      : > "\$TMP/het_hom.txt"; : > "\$TMP/bad_het_hom.txt"
-    fi
+    # 1) Extract SN + PSC sections from bcftools stats
+    awk '
+      printing && /^#/ { printing=0 }
+      /^# SN/ { printing=1 }
+      /^# PSC[[:space:]]+\\[2\\]id[[:space:]]+\\[3\\]sample/ { printing=1 }
+      printing
+    ' bcftools-stats.txt > bcftools-stats_min.txt
 
-    # -----------------------------
-    # 4) Singletons per sample
-    #    Count heterozygous occurrences at AC==1 sites.
-    # -----------------------------
-    echo "✓ Counting singletons" >> "${log_file}"
-    "\${SITE_SUBSET_CMD[@]}" \
-    | bcftools view -i 'AC==1' -Ou \
-    | bcftools query -f '[%SAMPLE\\t%GT\\n]' \
-    | awk '{
-        g=\$2
-        if(g!="./." && g!=".|.") {
-          if(g=="0/1" || g=="0|1" || g=="1/0" || g=="1|0") count[\$1]++
-        }
+    # 2) Read number of samples and number of records from SN section
+    read nsamples nrecords < <(
+      awk '
+        \$3=="number" && \$4=="of" && \$5=="samples:" { ns=\$6 }
+        \$3=="number" && \$4=="of" && \$5=="records:" { nr=\$6 }
+        END { print ns, nr }
+      ' bcftools-stats_min.txt
+    )
+
+    # 3) Compute total genotypes
+    ngenotypes=\$(( nsamples * nrecords ))
+    echo "Samples: \$nsamples  Records: \$nrecords  Genotypes: \$ngenotypes" >> "${log_file}"
+
+    # 4) Add rHetHom [15] and CallRate [16] to PSC section
+    awk -v OFS="\\t" -v ngenotypes="\$ngenotypes" '
+      # Extend PSC header
+      /^# PSC[[:space:]]+\\[2\\]id[[:space:]]+\\[3\\]sample[[:space:]]+\\[4\\]nRefHom/ {
+        in_psc=1
+        print \$0, "[15] rHetHom", "[16] CallRate"
+        next
       }
-      END{for(s in count) printf "%s\\t%d\\n",s,count[s]}' \
-    > "\$TMP/singletons.txt"
-    awk -v thr="\$SINGLETONS_THRESHOLD" '\$2 > thr {print \$1}' "\$TMP/singletons.txt" > "\$TMP/high_singletons.txt"
 
-    # -----------------------------
-    # 5) Contamination via sceVCF (optional)
-    #    Requirements: FORMAT/AD exists AND sceVCF is resolvable.
-    #    We accept:
-    #       - sceVCF_path == ""                     -> skip
-    #       - sceVCF_path == "/path/to/sceVCF"      -> call that binary
-    #       - sceVCF_path == "/path/to/dir"         -> use "/path/to/dir/sceVCF" if executable
-    # -----------------------------
+      # Any other header stops PSC mode
+      /^#/ { in_psc=0; print; next }
+
+      # PSC rows: compute new metrics
+      in_psc && \$1=="PSC" {
+        r = (\$5+0)==0 ? "NA" : sprintf("%.6f", \$6/\$5)        # [15]
+        cr = sprintf("%.6f", (1 - (\$14/ngenotypes)))         # [16], using [14]=nMissing
+        print \$0, r, cr
+        next
+      }
+
+      { print }
+    ' bcftools-stats_min.txt > sample-qc-stats.txt
+
+    # 5) Contamination check 
+    CHARR_TSV="sceVCF-results.tsv"
+    : > "\$CHARR_TSV"  # create empty file by default
+
     if bcftools view -h "\$INPUT_VCF" | grep -q "^##FORMAT=<ID=AD,"; then
       if [[ -n "${sceVCF_path}" ]]; then
         SCE_CMD=""
         if [[ -x "${sceVCF_path}" ]]; then
-          # Full path to the binary
           SCE_CMD="${sceVCF_path}"
         elif [[ -x "${sceVCF_path}/sceVCF" ]]; then
-          # Directory containing the binary
           SCE_CMD="${sceVCF_path}/sceVCF"
         fi
 
         if [[ -n "\$SCE_CMD" ]]; then
           echo "✓ sceVCF found (\$SCE_CMD) — running contamination check" >> "${log_file}"
-          "\$SCE_CMD" -o "\$TMP/charr_full.tsv" "\$INPUT_VCF"
-          # Expecting a TSV with at least: SAMPLE<TAB>CONTAM_VALUE on column 2
-          awk -v thr="\$CONTAM_THRESHOLD" '\$2 > thr {print \$1}' "\$TMP/charr_full.tsv" > "\$TMP/high_contam.txt"
+          "\$SCE_CMD" -o "\$CHARR_TSV" "\$INPUT_VCF"
+          awk -F'\t' -v OFS='\t' '
+          FNR==NR {
+            # Read sceVC results into array (skip meta)
+            if (\$1 ~ /^#/ || \$1 ~ /^##/) next
+            charr[\$1] = \$10
+            next
+          }
+          # When we hit the #PSC header, append [17] CHARR
+          /^# PSC/ {
+            print \$0, "[17] CHARR"
+            next
+          }
+          # For PSC data lines, append CHARR value
+          /^PSC/ {
+            val = (\$3 in charr ? charr[\$3] : "NA")
+            print \$0, val
+            next
+          }
+          # Print all other lines unchanged
+          { print }
+        ' charr_full.tsv sample-qc-stats.txt > sample-qc-stats.txt.tmp && mv sample-qc-stats.txt.tmp sample-qc-stats.txt
+
         else
           echo "x sceVCF not found or not executable at: ${sceVCF_path} — skipping" >> "${log_file}"
-          : > "\$TMP/high_contam.txt"
         fi
       else
         echo "x Contamination check not running (sceVCF_path empty)" >> "${log_file}"
-        : > "\$TMP/high_contam.txt"
       fi
     else
       echo "x AD (FORMAT) not found — skipping contamination check (required for sceVCF)" >> "${log_file}"
-      : > "\$TMP/high_contam.txt"
     fi
 
-    # -------------------------------------
-    # Aggregate failing samples across tests
-    # -------------------------------------
-    cat "\$TMP"/low_cov_samples.txt "\$TMP"/low_call_rate.txt "\$TMP"/bad_het_hom.txt "\$TMP"/high_singletons.txt "\$TMP/high_contam.txt" \
-    2>/dev/null | sort -u > "\$TMP/samples_to_remove.txt"
 
-    # Log per-test counts (nice for quick diagnostics)
-    for f in mean_dp.txt low_cov_samples.txt call_rate.txt low_call_rate.txt het_hom.txt bad_het_hom.txt singletons.txt high_singletons.txt high_contam.txt; do
-      [[ -f "\$TMP/\$f" ]] || continue
-      n=\$(wc -l < "\$TMP/\$f"); echo "  - \${f}: \${n} lines" >> "${log_file}"
-    done
+    # --- now filter samples from the PSC section according to your rules ---
+    # Rules:
+    # - If DP present:        [10] average depth < COV_THRESHOLD           -> fail "low_cov"
+    # - If GT present:        [15] rHetHom > HET_HOM_THRESHOLD             -> fail "high_rHetHom"
+    #                         [16] CallRate < CALL_RATE_THRESHOLD          -> fail "low_callrate"
+    # - Always check:         [11] nSingletons > SINGLETONS_THRESHOLD      -> fail "high_singletons"
 
-    # -------------------------------------
-    # Remove failing samples (if any)
-    # -------------------------------------
-    if [[ -s "\$TMP/samples_to_remove.txt" ]]; then
-      rm_count=\$(wc -l < "\$TMP/samples_to_remove.txt")
-      echo "✗ Removing \${rm_count} samples failing QC" >> "${log_file}"
-      bcftools view --threads ${task.cpus} -S ^"\$TMP/samples_to_remove.txt" "\$INPUT_VCF" -Oz -o "\$OUTPUT_VCF"
-      tabix -p vcf "\$OUTPUT_VCF"
+    awk -v OFS="\\t" \\
+        -v dp_found="\$DP_FOUND" \\
+        -v gt_found="\$GT_FOUND" \\
+        -v cov_thr="\$COV_THRESHOLD" \\
+        -v het_hom_thr="\$HET_HOM_THRESHOLD" \\
+        -v cr_thr="\$CALL_RATE_THRESHOLD" \\
+        -v sing_thr="\$SINGLETONS_THRESHOLD" \\
+        -v contam_thr="\$CONTAM_THRESHOLD" '
+      BEGIN {
+        print "sample","reason(s)","avg_depth","rHetHom","call_rate","nSingletons", "CHARR" > "sample-qc-fails.tsv"
+      }
+
+      # Detect PSC header and whether [17] CHARR exists
+      /^# PSC[[:space:]]+\\[2\\]id[[:space:]]+\\[3\\]sample/ {
+        in_psc = 1
+        # Check if header line includes CHARR (robust to extra spacing)
+        if (\$0 ~ /\\[17\\][[:space:]]+CHARR/) has_charr = 1
+        next
+      }
+
+      # Any other header ends PSC block
+      /^#/ { in_psc = 0; next }
+
+    
+      in_psc && \$1=="PSC" {
+        sample = \$3
+        avgd   = \$10+0
+        nsing  = \$11+0
+        rHH    = (\$15=="NA" ? "NA" : \$15+0)
+        cr     = \$16+0
+        chval = (\$17=="" ? "nan" : \$17+0)
+        
+        fail=0
+        reasons=""
+
+
+        if (dp_found>0 && avgd < cov_thr) {
+          fail=1; reasons = reasons (reasons?";":"") "low_cov"
+        }
+        if (gt_found>0 && rHH!="NA" && rHH > het_hom_thr) {
+          fail=1; reasons = reasons (reasons?";":"") "high_rHetHom"
+        }
+        if (gt_found>0 && cr < cr_thr) {
+          fail=1; reasons = reasons (reasons?";":"") "low_callrate"
+        }
+        if (gt_found>0 && nsing > sing_thr) {
+          fail=1; reasons = reasons (reasons?";":"") "high_singletons"
+        }
+        
+        # CHARR if present (col 17), treat NA/-nan as not valid
+        charr_raw = (has_charr && NF>=17 ? \$17 : "NA")
+        charr_valid = (charr_raw!="NA" && charr_raw!="-nan")
+        if (charr_valid) charr = charr_raw+0
+
+        # --- Contamination check via CHARR ---
+        # Only apply if CHARR column exists and is numeric
+        if (has_charr && charr_valid && charr > contam_thr) {
+          fail=1; reasons = reasons (reasons?";":"") "high_contam"
+        }
+
+
+        if (fail) {
+          print sample, reasons, avgd, rHH, cr, nsing, chval >> "sample-qc-fails.tsv"
+          bad[sample]=1
+        } else {
+          good[sample]=1
+        }
+        next
+      }
+
+      END {
+        # emit PASS list
+        for (s in good) if (!(s in bad)) print s > "sample-keep.txt"
+      }
+    ' sample-qc-stats.txt
+
+
+
+    echo "QC filtering done." >> "${log_file}"
+    echo "- Failing samples: sample-qc-fails.tsv" >> "${log_file}"
+    echo "- Passing samples: sample-keep.txt" >> "${log_file}"
+
+    # Filter VCF to keep only passing samples
+    if [[ -s sample-keep.txt ]]; then
+        echo "Filtering VCF to keep passing samples..." >> "${log_file}"
+        bcftools view -S sample-keep.txt -Oz -o "\$OUTPUT_VCF" "\$INPUT_VCF"
+        bcftools index -t "\$OUTPUT_VCF"
+        echo "✓ Filtered VCF created: \$OUTPUT_VCF" >> "${log_file}"
     else
-      {
-        echo "✓ No samples flagged — copying input to output"
-      } >> "${log_file}"
-      # Use copy (not move) to avoid altering the staged input
-      cp -a "\$INPUT_VCF" "\$OUTPUT_VCF"
-      if [[ -f "\${INPUT_VCF}.tbi" ]]; then
-        cp -a "\${INPUT_VCF}.tbi" "\$OUTPUT_VCF.tbi"
-      else
-        tabix -p vcf "\$OUTPUT_VCF"
-      fi
+        echo "WARNING: No samples passed QC filters!" >> "${log_file}"
+        # Create empty VCF with just header
+        bcftools view -h "\$INPUT_VCF" | bgzip > "\$OUTPUT_VCF"
+        bcftools index -t "\$OUTPUT_VCF"
     fi
 
-    {
-      echo "✓ SAMPLE_QC complete. Output: \$OUTPUT_VCF"
-    } >> "${log_file}"
+    # Clean up temporary files
+    rm -rf "\$TMP"
     """
 }
 
