@@ -34,25 +34,33 @@ process INDEX_VCF {
     if (has_index) {
         """
         touch "${log_file}"
+        nvariant="\$(bcftools index -n ${vcf})"
+        nsample="\$(bcftools query -l ${vcf} | wc -l)"
+        ngenotypes="\$(( nsample * nvariant ))"
+
         {
-          echo " === EGA BCFTools Pipeline ==="
-          echo "Developed by: Mireia Marin Ginestar (mireia.marin@crg.eu)"
-          echo "version 2.0.0"
-          echo ""
-          echo "✓ Index already exists for ${vcf}"
-          echo ""
-          echo " === ORIGINAL VARIANT AND SAMPLE NUMBER === "
-          echo "Variant Number: \$(bcftools index -n ${vcf})"
-          echo "Sample Number: \$(bcftools query -l ${vcf} | wc -l)"
+            echo " === EGA BCFTools Pipeline ==="
+            echo "Developed by: Mireia Marin Ginestar (mireia.marin@crg.eu)"
+            echo "version 2.0.0"
+            echo ""
+            echo "✓ Index already exists for ${vcf}"
+            echo ""
+            echo " === ORIGINAL STATISTICS === "
+            echo "Variant Number: \$nvariant"
+            echo "Sample Number: \$nsample"
+            echo "Genotype Number: \$ngenotypes"
+            echo ""
         } > "${log_file}"
         """
     } else {
         """
         set -euo pipefail
-
         touch "${log_file}"
         echo "✗ No index found for ${vcf} — creating..." >> "${log_file}"
         tabix -p vcf "${vcf}"
+        nvariant="\$(bcftools index -n ${vcf})"
+        nsample="\$(bcftools query -l ${vcf} | wc -l)"
+        ngenotypes="\$(( nsample * nvariant ))"
         {
           echo " === EGA BCFTools Pipeline ==="
           echo "Developed by: Mireia Marin Ginestar (mireia.marin@crg.eu)"
@@ -60,9 +68,10 @@ process INDEX_VCF {
           echo ""
           echo "✓ Index created for ${vcf}"
           echo ""
-          echo " === ORIGINAL VARIANT AND SAMPLE NUMBER === "
-          echo "Original Variant Number: \$(bcftools index -n ${vcf})"
-          echo "Original Sample Number: \$(bcftools query -l ${vcf} | wc -l)"
+          echo " === ORIGINAL STATISTICS === "
+          echo "Variant Number: \$nvariant"
+          echo "Sample Number: \$nsample"
+          echo "Genotype Number: \$ngenotypes"
         } > "${log_file}"
         """
     }
@@ -402,7 +411,7 @@ process SAMPLE_QC {
     ' bcftools-stats.txt > bcftools-stats_min.txt
 
     # 2) Read number of samples and number of records from SN section
-    read nsamples nrecords < <(
+    read nsamples_orig nvariants < <(
       awk '
         \$3=="number" && \$4=="of" && \$5=="samples:" { ns=\$6 }
         \$3=="number" && \$4=="of" && \$5=="records:" { nr=\$6 }
@@ -411,8 +420,7 @@ process SAMPLE_QC {
     )
 
     # 3) Compute total genotypes
-    ngenotypes=\$(( nsamples * nrecords ))
-    echo "Samples: \$nsamples  Records: \$nrecords  Genotypes: \$ngenotypes" >> "${log_file}"
+    ngenotypes=\$(( nsamples_orig * nvariants ))
 
     # 4) Add rHetHom [15] and CallRate [16] to PSC section
     awk -v OFS="\\t" -v ngenotypes="\$ngenotypes" '
@@ -588,8 +596,20 @@ process SAMPLE_QC {
         bcftools index -t "\$OUTPUT_VCF"
     fi
 
+    # add final stats
+    failed_samples=\$(wc -l < sample-qc-fails.tsv) # tsv contains header
+    nsamples_qc=\$((nsamples_orig - failed_samples + 1)) # add one for the 1 substracted because of the header
+    ngenotypes=\$(( nsamples_qc * nvariants ))
+    {
+    echo ""
+    echo " === STATISTICS AFTER QC === "
+    echo "Variant Number: \$nvariants"
+    echo "Sample Number: \$nsamples_qc"
+    echo "Genotype Number: \$ngenotypes" 
+    } >> "${log_file}"
     # Clean up temporary files
     rm -rf "\$TMP"
+    
     """
 }
 
