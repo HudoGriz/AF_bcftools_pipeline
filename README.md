@@ -249,15 +249,18 @@ Go to /work/c7/065171[-->] for the final files of the pipeline.
 
 **Recomendation:** Use at least the argument `-with-report report.html`, this will always show you the folders where the files have been saved.
 
-## How to generate metadata_csv
+## How to generate metadata for the samples
 
-If you don't have the necessary metadata to create `metadata.csv` you can infer it using tools such as [GRAF tools](https://github.com/ncbi/graf) and [Hail](https://hail.is/docs/0.2/index.html). 
+Three categories of metadata are required per sample to accurately calculate allele frequencies: sex, ancestry, and relatedness. If you don't have this metadata available there are several tools that can infer it using the genomic data. 
+
+Two examples that have been tested and have good accuracy are [GRAF tools](https://github.com/ncbi/graf) and [Hail](https://hail.is/docs/0.2/index.html). 
 
 ### Graf tools
-GRAF provides functions to infer sex (graf sex, PLINK input), detect related samples (graf rel, PLINK input), and assign ancestry ([graf anc](https://github.com/jimmy-penn/grafanc/tree/master), VCF input). Note that, for ancestry inference, only super-population calls (e.g. European, Asian, African...) are recommended, since finer-level predictions are not sufficiently accurate. 
+GRAF provides functions to infer sex (`graf sex`, PLINK input), detect related samples (`graf rel`, PLINK input), and assign ancestry ([graf anc](https://github.com/jimmy-penn/grafanc/tree/master), VCF input). Note that, for ancestry inference, only super-population calls (e.g. European, Asian, African...) are recommended, since finer-level predictions are not sufficiently accurate. 
 
 ### Hail
-Hail offers similar capabilities with `impute_sex` for sex inference and `king` and `pc_relate` for relatedness filtering.
+Hail offers similar capabilities with `impute_sex` for sex inference and `king` and `pc_relate` for [relatedness filtering](https://hail.is/docs/0.2/guides/genetics.html#remove-related-individuals-from-a-dataset). Another interesting feature is `maximal_independent_set` which outputs the largest subset of unrelated individuals from a dataset.
+
 
 ## References
 
