@@ -631,7 +631,8 @@ process SAMPLE_QC {
 
 process ADD_AF {
     tag "$vcf"
-
+    publishDir "${params.output_dir}", mode: 'move', pattern: "*-AF_recalc.vcf.gz*"
+    
     input:
     tuple path(vcf), path(tbi), val(log_file)
     path metadata_csv
