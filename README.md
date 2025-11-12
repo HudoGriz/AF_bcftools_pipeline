@@ -84,62 +84,108 @@ The pipeline performs the following steps:
 Edit *nextflow.config* to adjust parameters. 
 
 ```groovy
+// Nextflow configuration file
+nextflow.enable.dsl = 2
+
+// Default parameters
 params {
-    // Paths
-    input        = "/path/to/folder/with/vcfs/"
-    output_stats = "/home/mireia/GitHub/bcftools-pipeline/bcftools-pipeline"
-    sceVCF_path  = "/path/to/sceVCF_binaries"
-    metadata_csv = "/path/to/metadata.csv"  // sample/sex/ancestry
-    seq_type     = "WGS" // or "WES"
-    threads      = 4
+    // Input/Output paths
+    input = "/home/mireia/Bioinfo/nextflow-bcftools/test/"
+    sceVCF_path = "./sceVCF" // Current directory by default
+    metadata_csv = "/home/mireia/mock_metadata_pop13_1.csv" // sample/sex/ancestry
+    output_stats = "." // Current directory by default
+    output_dir = "."  // Current directory by default
 
-     // Pipeline behavior
-    seq_type     = 'WGS' // or 'WES'
-    threads      = 4
-
-     // -----------------------
-    // QC Thresholds
-    // -----------------------
+    
+    // Pipeline parameters
+    seq_type = 'WGS'  // or 'WES'
+    threads = 4
+    
+    // Quality control thresholds
     qc {
-
-        // Genotype QC defaults 
+        // Genotype QC thresholds
         genotype {
-        gq_threshold         = 20
-        dp_threshold         = 10
-        ad_ratio_threshold   = 0.2
+            gq_threshold = 20
+            dp_threshold = 10
+            ab_ratio_threshold = 0.2
         }
-
-        // Variant QC defaults
+        
+        // Variant QC thresholds  
         variant {
-        qual_threshold                 = 30
-        qd_threshold                   = 2.0
-        dp_threshold                   = 10
-        mq_threshold                   = 40
-        fs_threshold                   = 60
-        read_pos_rank_sum_threshold    = -8.0
+            qual_threshold = 30
+            qd_threshold = 2.0
+            dp_threshold = 10
+            mq_threshold = 40
+            fs_threshold = 60
+            read_pos_rank_sum_threshold = -8.0
         }
-
-        // Sample QC (choose set via `seq_type`)
+        
+        // Sample QC thresholds (WES)
         sample {
-        // Whole-Exome defaults
-        wes {
-            coverage_threshold       = 10
-            het_hom_threshold        = 10
-            call_rate_threshold      = 0.95
-            singletons_threshold     = 5000
-            contamination_threshold  = 0.00015
-        }
-        // Whole-Genome defaults
-        wgs {
-            coverage_threshold       = 15
-            het_hom_threshold        = 3.3
-            call_rate_threshold      = 0.95
-            singletons_threshold     = 100000
-            contamination_threshold  = 0.05
-        }
+            wes {
+                coverage_threshold = 10
+                het_hom_threshold = 10
+                call_rate_threshold = 0.95
+                singletons_threshold = 5000
+                contamination_threshold = 0.00015
+            }
+            // Sample QC thresholds (WGS)
+            wgs {
+                coverage_threshold = 15
+                het_hom_threshold = 3.3
+                call_rate_threshold = 0.95
+                singletons_threshold = 100000
+                contamination_threshold = 0.05
+            }
         }
     }
 }
+
+// Process-specific configurations
+process {
+    // Default process settings
+    cpus = params.threads
+    memory = '4.GB'
+    
+    withName: INDEX_VCF {
+        cpus = params.threads
+        memory = '2.GB'
+    }
+    
+    withName: SPLIT_MULTIALLELIC {
+        cpus = params.threads
+        memory = '4.GB'
+    }
+    
+    withName: GENOTYPE_QC {
+        cpus = params.threads
+        memory = '4.GB'
+    }
+    
+    withName: VARIANT_QC {
+        cpus = params.threads
+        memory = '4.GB'
+    }
+    
+    withName: SAMPLE_QC {
+        cpus = params.threads
+        memory = '8.GB'
+    }
+    
+    withName: ADD_AF {
+        cpus = params.threads
+        memory = '6.GB'
+    }
+}
+
+// Executor configuration
+executor {
+    name = 'local'
+    cpus = params.threads * 2
+    memory = '16.GB'
+}
+
+
 
 ```
 **Notes**
