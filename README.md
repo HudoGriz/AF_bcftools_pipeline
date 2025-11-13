@@ -304,9 +304,13 @@ Two examples that have been tested and have good accuracy are [GRAF tools](https
 ### Graf tools
 GRAF provides functions to infer sex (`graf sex`, PLINK input), detect related samples (`graf rel`, PLINK input), and assign ancestry ([graf anc](https://github.com/jimmy-penn/grafanc/tree/master), VCF input). Note that, for ancestry inference, only super-population calls (e.g. European, Asian, African...) are recommended, since finer-level predictions are not sufficiently accurate. 
 
+⚠️ If you choose to use Graf Tools, please use  [SetRsIdsInBimFile_EGAversion.pl](https://github.com/EGA-archive/AF_bcftools_pipeline/blob/main/SetRsIdsInBimFile_EGAversion.pl) script to perform the annotation step, as we have fixed several bugs present in the original version.
+
 ### Hail
 Hail offers similar capabilities with `impute_sex` for sex inference and `king` and `pc_relate` for [relatedness filtering](https://hail.is/docs/0.2/guides/genetics.html#remove-related-individuals-from-a-dataset). Another interesting feature is `maximal_independent_set` which outputs the largest subset of unrelated individuals from a dataset.
 
 ## References
 
 Lu W, Gauthier LD, Poterba T, Giacopuzzi E, Goodrich JK, Stevens CR, King D, Daly MJ, Neale BM, Karczewski KJ. CHARR efficiently estimates contamination from DNA sequencing data. bioRxiv [Preprint]. 2023 Jun 28:2023.06.28.545801. doi: 10.1101/2023.06.28.545801. Update in: Am J Hum Genet. 2023 Dec 7;110(12):2068-2076. doi: 10.1016/j.ajhg.2023.10.011. PMID: 37425834; PMCID: PMC10327099.
+
+NCBI. (2024). GRAF: Genetic relationship and fingerprinting [Software]. GitHub. https://github.com/ncbi/graf
