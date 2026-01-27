@@ -111,32 +111,6 @@ In the image list you should see: `af_bcftools_pipeline:latest`
 
 - **sceVCF binary path** 
 
-## Outputs 
-
-After a successful execution, you'll find inside the */work* folder:
-
-**Intermediate outputs**
-
-- Indexed VCFs (.tbi)
-
-- Split multiallelic VCFs
-
-- Masked genotypes VCFs
-
-- Variant-filtered and masked genotypes VCFs
-
-- Variant and Sample-filtered with masked genotypes VCFs
-
-- sample-qc-fails.tsv file with the samples deleted and which filter step failed
-
-**Final output**
-
-In the folder /output you'll find: 
-
-* *input_vcf_baseName*.vcf.gz  → fully filtered VCF with allele frequency annotations and witout sample level information. 
-
-- *input_vcf_baseName*.vcf.gz.tbi → index for the final VCF.
-
 ## Running the pipeline
 
 ### Configure the pipeline
@@ -304,6 +278,31 @@ params {
     sceVCF_path = "/usr/local/bin/sceVCF" // File downloaded by clonning. 
     metadata_csv =  "/data/input/metadata_file.csv" // header: sample/sex/ancestry. 
 ```
+## Outputs 
+
+After a successful execution, you'll find inside the */work* folder:
+
+**Intermediate outputs**
+
+- Indexed VCFs (.tbi)
+
+- Split multiallelic VCFs
+
+- Masked genotypes VCFs
+
+- Variant-filtered and masked genotypes VCFs
+
+- Variant and Sample-filtered with masked genotypes VCFs
+
+- sample-qc-fails.tsv file with the samples deleted and which filter step failed
+
+**Final output**
+
+In the folder /output you'll find: 
+
+* *input_vcf_baseName*.vcf.gz  → fully filtered VCF with allele frequency annotations and witout sample level information. 
+
+- *input_vcf_baseName*.vcf.gz.tbi → index for the final VCF.
 
 ## Bonus Tracks
 
