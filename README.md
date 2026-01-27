@@ -306,7 +306,7 @@ In the folder /output you'll find:
 
 ## Bonus Tracks
 
----
+
 💡 **How to find the files inside the /work folder?**
 
 Example a of nextflow output: 
