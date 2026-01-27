@@ -1,7 +1,5 @@
-nextflow.enable.dsl=2
-
 // Ensure the output dir exists (Groovy)
-file(params.output_stats).mkdirs()
+file(params.output).mkdirs()
 
 // =====================
 // Process: INDEX_VCF
@@ -41,7 +39,7 @@ process INDEX_VCF {
         {
             echo " === EGA BCFTools Pipeline ==="
             echo "Developed by: Mireia Marin Ginestar (mireia.marin@crg.eu)"
-            echo "version 2.0.0"
+            echo "version 3.0.0"
             echo ""
             echo "✓ Index already exists for ${vcf}"
             echo ""
@@ -64,7 +62,7 @@ process INDEX_VCF {
         {
           echo " === EGA BCFTools Pipeline ==="
           echo "Developed by: Mireia Marin Ginestar (mireia.marin@crg.eu)"
-          echo "version 2.0.0"
+          echo "version 3.0.0"
           echo ""
           echo "✓ Index created for ${vcf}"
           echo ""
@@ -188,8 +186,8 @@ process GENOTYPE_QC {
       {
         echo "x No FORMAT-based rules available; no masking performed."
       } >> "${log_file}"
-      cp -a "\$VCF_IN" "\$VCF_OUT"
-      cp -a "\${VCF_IN}.tbi" "\${VCF_OUT}.tbi" 2>/dev/null || tabix -p vcf "\$VCF_OUT"
+      cp -f "\$VCF_IN" "\$VCF_OUT"
+      cp -f "\${VCF_IN}.tbi" "\${VCF_OUT}.tbi" 2>/dev/null || tabix -p vcf "\$VCF_OUT"
       exit 0
     fi
 
@@ -614,24 +612,125 @@ process SAMPLE_QC {
 }
 
 // =====================
+// Process: FIX_PLOIDY
+// Goal: Correct ploidy for haploid regions (X and Y chromosomes) based on sample sex
+//       to ensure accurate hemizygous genotype calls and allele frequency calculations.
+// Inputs:
+//   - vcf, tbi      : indexed input VCF
+//   - log_file (val): log path to append progress
+//   - metadata_csv  : CSV with header; columns: SAMPLE, SEX (M/F or 1/2), ANCESTRY
+// Outputs:
+//   - <name>-ploidy_fixed.vcf.gz(.tbi): VCF with corrected ploidy for X/Y chromosomes
+//
+// Notes:
+//   - Creates a gender.txt file from metadata (sample<TAB>sex)
+//   - Uses bcftools +fixploidy with default ploidy rules for human X/Y chromosomes
+//   - Depending on the reference_genome provided by the user, coordinates from GRCh37 or GRCh38 will be used. Check /assets to for further details
+
+process FIX_PLOIDY {
+    tag "$vcf"
+    
+    input:
+    tuple path(vcf), path(tbi), val(log_file)
+    path metadata_csv
+    path ploidy_rules
+
+    output:
+    tuple path("${vcf.simpleName}-ploidy_fixed.vcf.gz"),
+          path("${vcf.simpleName}-ploidy_fixed.vcf.gz.tbi"),
+          val(log_file)
+
+    debug true
+    script:
+    """
+    set -euo pipefail
+
+    INPUT_VCF="${vcf}"
+    OUTPUT_VCF="${vcf.simpleName}-ploidy_fixed.vcf.gz"
+
+    {
+      echo ""
+      echo "=== FIX_PLOIDY: Creating gender.txt from metadata ==="
+    } >> "${log_file}"
+
+    # Create gender.txt file: sample<TAB>sex
+    # Convert M/F or 1/2 to M/F format for bcftools +fixploidy
+    awk -F, 'NR>1 {
+      sample = \$1
+      sex_code = \$2
+      
+      # Remove whitespace
+      gsub(/^[[:space:]]+|[[:space:]]+\$/, "", sex_code)
+      gsub(/^[[:space:]]+|[[:space:]]+\$/, "", sample)
+      
+      # Convert to M/F format
+      sex = ""
+      if (sex_code == "M" || sex_code == "1") sex = "M"
+      else if (sex_code == "F" || sex_code == "2") sex = "F"
+      
+      # Output: sample<TAB>sex
+      if (sex != "") print sample "\\t" sex
+    }' "${metadata_csv}" > gender.txt
+
+    echo "✓ Gender file created" >> "${log_file}"
+    
+    # Show sample count
+    n_samples=\$(wc -l < gender.txt)
+    n_males=\$(awk '\$2=="M"' gender.txt | wc -l)
+    n_females=\$(awk '\$2=="F"' gender.txt | wc -l)
+    
+    {
+      echo "  Total samples: \$n_samples"
+      echo "  Males: \$n_males"
+      echo "  Females: \$n_females"
+      echo ""
+      echo "Example gender assignments:"
+      head -n 5 gender.txt
+      echo ""
+      echo "=== Fixing ploidy for X/Y chromosomes ==="
+    } >> "${log_file}"
+
+    # Fix ploidy 
+    # If GRCh37, ploidy_cmd points to the provided rules for GRCh37
+    # If GRCh38, ploidy_cmd points to the provided rules for GRCh38 
+    bcftools +fixploidy "\${INPUT_VCF}" -Oz -o "\$OUTPUT_VCF" -- -s gender.txt -p ${ploidy_rules}
+
+    # Index the output
+    tabix -p vcf "\$OUTPUT_VCF"
+
+    {
+      echo "✓ Ploidy correction complete"
+      echo "  Output: \$OUTPUT_VCF"
+      echo "  Males will have haploid genotypes (0 or 1) on X and Y"
+      echo "  Females will have diploid genotypes (0/0, 0/1, 1/1) on X"
+    } >> "${log_file}"
+    """
+}
+
+
+// =====================
 // Process: ADD_AF
-// Goal: Recalculate allele-frequency tags (AF/AC/AN/etc.), optionally per group,
-//       from a CSV metadata file, then drop genotypes/FORMAT to emit an INFO-only VCF.
+// Goal: Recalculate allele-frequency tags (AF/AC/AN/etc.), stratified by:
+//       1) Overall (all samples)
+//       2) By sex (MALE, FEMALE)
+//       3) By ancestry (EUR, AFR, etc.)
+//       4) By ancestry+sex combinations (EUR_MALE, EUR_FEMALE, etc.)
+//       Then drop genotypes/FORMAT to emit an INFO-only VCF.
 // Inputs:
 //   - vcf,tbi       : indexed input VCF
 //   - log_file (val): log path to append progress
 //   - metadata_csv  : CSV with header; columns used here: SAMPLE, SEX(1/2), ANCESTRY
 // Outputs:
-//   - <name>-AF_recalc.vcf.gz(.tbi): INFO-only VCF with (per-group) AF/AC/AN, etc.
+//   - <name>-AF_recalc.vcf.gz(.tbi): INFO-only VCF with stratified AF/AC/AN tags
 //
 // Notes:
 //   - bcftools +fill-tags can compute tags per population when given a groups file
 //     (sample<TAB>comma-separated-groups).
-//   - We stream through: +fill-tags → view -G (drop all genotypes) → annotate -x FORMAT (clean header).
+//   - We create groups for: SEX alone, ANCESTRY alone, and ANCESTRY_SEX combinations
 
 process ADD_AF {
     tag "$vcf"
-    publishDir "${params.output_dir}", mode: 'move', pattern: "*-AF_recalc.vcf.gz*"
+    publishDir "${params.output}", mode: 'move', pattern: "*-AF_recalc.vcf.gz*"
     
     input:
     tuple path(vcf), path(tbi), val(log_file)
@@ -657,26 +756,70 @@ process ADD_AF {
 
     # Build groups file for bcftools +fill-tags:
     #   <sample> <TAB> <group1,group2,...>
-    # Here: groups = {SEX, ANCESTRY} if present. SEX in metadata is 1=MALE, 2=FEMALE.
-    awk -F, 'NR>1{
-      s=\$1
-      sex=tolower(\$2)
-      anc=\$3
-      g=""
-      if (sex=="2") g=g"FEMALE"
-      else if (sex=="1") g=g"MALE"
-      if (length(anc)) g=(g?g"," anc:anc)
-      print s "\\t" g
+    # 
+    # For each sample, we add:
+    #   - SEX group (MALE or FEMALE)
+    #   - ANCESTRY group (EUR, AFR, etc.)
+    #   - ANCESTRY_SEX combination (EUR_MALE, EUR_FEMALE, etc.)
+    #
+    # SEX in metadata: 1=MALE, 2=FEMALE
+    
+    awk -F, 'NR>1 {
+      sample = \$1
+      sex_code = \$2
+      ancestry = \$3
+      
+      # Remove any whitespace
+      gsub(/^[[:space:]]+|[[:space:]]+\$/, "", sex_code)
+      gsub(/^[[:space:]]+|[[:space:]]+\$/, "", ancestry)
+      
+      # Determine sex label - handle both M/F and 1/2 formats
+      sex = ""
+      if (sex_code == "M" || sex_code == "1") sex = "M"
+      else if (sex_code == "F" || sex_code == "2") sex = "F"
+      
+      # Build comma-separated group list
+      groups = ""
+      
+      # Add sex group
+      if (sex != "") {
+        groups = sex
+      }
+      
+      # Add ancestry group
+      if (length(ancestry) > 0) {
+        if (groups != "") groups = groups ","
+        groups = groups ancestry
+      }
+      
+      # Add ancestry_sex combination
+      if (length(ancestry) > 0 && sex != "") {
+        if (groups != "") groups = groups ","
+        groups = groups ancestry "_" sex
+      }
+      
+      # Output: sample<TAB>groups
+      print sample "\\t" groups
     }' "${metadata_csv}" > groups.txt
 
-    echo "✓ Groups file created" >> "${log_file}"
-
+    echo "✓ Groups file created with ancestry, sex, and ancestry+sex combinations" >> "${log_file}"
+    
+    # Show a few example lines for verification
     {
-      echo "=== Adding allele frequencies to VCF (dropping all FORMAT/GT columns) ==="
+      echo "Example group assignments:"
+      head -n 5 groups.txt
     } >> "${log_file}"
 
-    # Recalculate AF/AC/AN (and other tags) across all samples AND per-group (via -S groups.txt),
-    # then drop genotypes (-G) and strip any FORMAT header remnants (-x FORMAT).  :contentReference[oaicite:3]{index=3}
+    {
+      echo ""
+      echo "=== Adding stratified allele frequencies to VCF (dropping all FORMAT/GT columns) ==="
+    } >> "${log_file}"
+
+    # Recalculate AF/AC/AN (and other tags) across:
+    #   - All samples (default)
+    #   - Per-group: MALE, FEMALE, EUR, AFR, EUR_MALE, EUR_FEMALE, etc.
+    # Then drop genotypes (-G) and strip any FORMAT header remnants (-x FORMAT).
+    
     bcftools +fill-tags "\${INPUT_VCF}" -Ou -- -S groups.txt \
       | bcftools view -G -Ou \
       | bcftools annotate -x FORMAT \
@@ -686,10 +829,18 @@ process ADD_AF {
     tabix -p vcf "\$OUTPUT_VCF"
 
     {
-      echo "✓ AF annotation complete. Output: \$OUTPUT_VCF"
+      echo "✓ AF annotation complete with stratified groups"
+      echo "  Output: \$OUTPUT_VCF"
+      echo ""
+      echo "AF tags created for:"
+      echo "  - Overall: AF, AC, AN"
+      echo "  - By sex: AF_MALE, AF_FEMALE, AC_MALE, AC_FEMALE, AN_MALE, AN_FEMALE"
+      echo "  - By ancestry: AF_EUR, AF_AFR, etc."
+      echo "  - By ancestry+sex: AF_EUR_MALE, AF_EUR_FEMALE, etc."
     } >> "${log_file}"
     """
 }
+
 
 
 workflow {
@@ -697,7 +848,7 @@ workflow {
     vcf_ch = Channel.fromPath("${params.input}/*.vcf.gz", checkIfExists: true)
         .map { vcf ->
             def tbi = file("${vcf}.tbi")
-            def log_file = "${params.output_stats}/${vcf.simpleName}.log"
+            def log_file = "${params.output}/${vcf.simpleName}.log"
             if (tbi.exists()) {
                 tuple(vcf, true, tbi, log_file)
             } else {
@@ -724,7 +875,15 @@ workflow {
     } else {
         error "ERROR: metadata_csv parameter is required for ADD_AF process"
     }
+    
+    // Select the correct ploidy file based on the config
+    def ploidy_file = params.reference_genome == 'GRCh38' ? 
+        file("${projectDir}/assets/ploidy_grch38.txt") : 
+        file("${projectDir}/assets/ploidy_grch37.txt")
 
+    // Fix ploidy for X/Y chromosomes before AF calculation
+    ploidy_fixed = FIX_PLOIDY(sample_qc, metadata_ch, ploidy_file)
+    
     // Add AF annotations
-    af_annotated = ADD_AF(sample_qc, metadata_ch)
+    af_annotated = ADD_AF(ploidy_fixed, metadata_ch)
 }

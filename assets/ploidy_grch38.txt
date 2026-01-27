@@ -1,0 +1,12 @@
+# Chromosome  Start      End        Gender  Ploidy
+chrX          10001      2781479    M       2
+chrX          10001      2781479    F       2
+chrX          2781480    155701382  M       1
+chrX          2781480    155701382  F       2
+chrX          155701383  156030895  M       2
+chrX          155701383  156030895  F       2
+chrY          10001      2781479    M       2
+chrY          2781480    56887902   M       1
+chrY          1          57227415   F       0
+# All autosomes default to 2
+* * * * 2

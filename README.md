@@ -38,11 +38,27 @@ The pipeline performs the following steps:
 
    **Thresholds differ depending on `seq_type` (WES vs WGS).**
 
-6. **ADD_AF**  
+6. **FIX_PLOIDY**
+
+    - Metadata Conversion: Generates a gender.txt mapping (Sample ID → Sex) from the input metadata.
+
+    - Ploidy Correction: Uses bcftools +fixploidy to ensure sex chromosomes are handled correctly. This converts diploid "heterozygous" calls in male non-PAR regions into proper haploid calls, which is essential for accurate Allele Frequency (AF) calculation.
+
+    - Genome-Aware: Automatically selects PAR (Pseudoautosomal Region) coordinates for GRCh37 or GRCh38 based on the reference_genome parameter.
+
+    💡 Customization: If your data uses non-standard chromosome names or specific PAR boundaries, you can modify the coordinate files in the /assets directory.
+
+
+
+7. **ADD_AF**  
    - Uses a metadata CSV file to define groups (sex + ancestry).  
    - Annotates the final VCF with total and group-specific allele frequencies.
 
-## Technical requirements 
+## Installation
+
+### OPTION 1: Clone the repository
+
+Technical requirements:
 
 - [Nextflow](https://nextflow.io/docs/latest/install.html) ≥ 24.04
 
@@ -53,6 +69,22 @@ The pipeline performs the following steps:
 - [tabix](https://www.htslib.org/doc/tabix.html) (htslib) ≥ 1.13
 
 - [sceVCF binaries](https://github.com/HTGenomeAnalysisUnit/SCE-VCF/releases/tag/v0.1.3) for contamination checks
+
+### OPTION 2: Docker
+
+Clone all the contents of the folder and build the container: 
+
+```
+docker build --tag af_bcftools_pipeline:latest .
+```
+
+To check the installation was correct: 
+
+```
+docker image ls
+```
+
+In the image list you should see: `af_bcftools_pipeline:latest`
 
 ## Input Requirements
 
@@ -66,22 +98,50 @@ The pipeline performs the following steps:
     Example: 
     ```
     SAMPLE,SEX,ANCESTRY
-    sample1,1,EUR
-    sample2,2,AFR
-    sample3,1,EAS
+    sample1,M,EUR
+    sample2,F,AFR
+    sample3,M,EAS
     ```
     **Some important considerations about the submitted metadata:** 
     
     - Ensure the order of your metadata columns is the one shown above.
-    - Sex should be coded as `1` = MALE, `2` = FEMALE.  
+    - Sex should be coded as `M` = MALE, `F` = FEMALE.  
     - Ancestry codes are free-text (e.g., EUR, AFR, EAS). But, take into consideration that the naming on the CSV will be used to annotate the ancestry AF fields in the VCF. 
 
 
 - **sceVCF binary path** 
 
-## Configuration 
+## Outputs 
 
-Edit *nextflow.config* to adjust parameters. 
+After a successful execution, you'll find inside the */work* folder:
+
+**Intermediate outputs**
+
+- Indexed VCFs (.tbi)
+
+- Split multiallelic VCFs
+
+- Masked genotypes VCFs
+
+- Variant-filtered and masked genotypes VCFs
+
+- Variant and Sample-filtered with masked genotypes VCFs
+
+- sample-qc-fails.tsv file with the samples deleted and which filter step failed
+
+**Final output**
+
+In the folder /output you'll find: 
+
+* *input_vcf_baseName*.vcf.gz  → fully filtered VCF with allele frequency annotations and witout sample level information. 
+
+- *input_vcf_baseName*.vcf.gz.tbi → index for the final VCF.
+
+## Running the pipeline
+
+### Configure the pipeline
+
+Edit `nextflow.config` to adjust parameters. 
 
 ```groovy
 // Nextflow configuration file
@@ -90,16 +150,15 @@ nextflow.enable.dsl = 2
 // Default parameters
 params {
     // Input/Output paths
-    input = "/home/mireia/Bioinfo/nextflow-bcftools/test/"
-    sceVCF_path = "./sceVCF" // Current directory by default
-    metadata_csv = "/home/mireia/mock_metadata_pop13_1.csv" // sample/sex/ancestry
-    output_stats = "." // Current directory by default
-    output_dir = "."  // Current directory by default
-
+    input = "/data/input" // move input VCFs to this folder.  
+    output = "/data/output" // output directory
+    sceVCF_path = "/usr/local/bin/sceVCF" // File downloaded by clonning. 
+    metadata_csv =  "/data/input/mock_metadata_pop13_1.csv" // header: sample/sex/ancestry. 
     
     // Pipeline parameters
     seq_type = 'WGS'  // or 'WES'
     threads = 4
+    reference_genome = 'GRCh37' // or 'GRCh38'
     
     // Quality control thresholds
     qc {
@@ -185,7 +244,12 @@ executor {
     memory = '16.GB'
 }
 
+// Prohibit docker-in-docker
+docker.enabled = false
+singularity.enabled = false
 
+process.stageInMode  = 'symlink'
+process.stageOutMode = 'symlink'
 
 ```
 **Notes**
@@ -196,15 +260,19 @@ executor {
 
 - The fields INFO/QD, INFO/DP, INFO/MQ, INFO/FS, INFO/ReadPosRankSum,  FORMAT/GQ, FORMAT/GT and FORMAT/AD must be correctly described in the header for the filtering to work correctly.
 
-## Running the Pipeline
+### OPTION 1: After clonning the repository 
 
-### Basic run: 
+#### Basic run: 
+
+Set up the correct input/output paths in `nextflow.config` and then:
 
 ```bash
 nextflow run main.nf
 ```
 
-### With custom parameters
+#### With custom parameters
+
+Provide the input/output path as custom parameters: 
 
 ```bash
 nextflow run main.nf \
@@ -217,7 +285,57 @@ nextflow run main.nf \
 
 **NOTE:** This will overwrite the configuration parameters set in nextflow.config
 
-### HTML report and timeline
+
+### OPTION 2: From a Docker Container
+
+1. Move the VCF and the CSV to the input folder. Do not modify the paths in the nextflow.config
+
+2. Run:
+```
+docker compose up
+```
+
+When using the Docker set up, please ensure the paths in `nextflow.config` are: 
+
+``` 
+params {
+    input = "/data/input" // move input VCFs to this folder.  
+    output = "/data/output" // output directory
+    sceVCF_path = "/usr/local/bin/sceVCF" // File downloaded by clonning. 
+    metadata_csv =  "/data/input/metadata_file.csv" // header: sample/sex/ancestry. 
+```
+
+## Bonus Tracks
+
+---
+💡 **How to find the files inside the /work folder?**
+
+Example a of nextflow output: 
+
+```
+[34/34b365] process > INDEX_VCF (test.vcf.bgz)                                           [100%] 1 of 1 ✔
+[bc/56f27a] process > SPLIT_MULTIALLELIC (test.vcf.bgz)                                  [100%] 1 of 1 ✔
+[46/bf10e7] process > GENOTYPE_QC (test_split-multiallelic.vcf.bgz)                      [100%] 1 of 1 ✔
+[88/8b101c] process > VARIANT_QC (test_split-multiallelic-masked.vcf.gz)                 [100%] 1 of 1 ✔
+[33/a6c930] process > SAMPLE_QC (test_split-multiallelic-masked-filtered.vcf.gz)         [100%] 1 of 1 ✔
+[c7/065171] process > ADD_AF (test_split-multiallelic-masked-filtered.sample_qc.vcf.bgz) [100%] 1 of 1 ✔
+```
+
+The intermediate files are saved inside the nextflow folder for each step. 
+
+Go to /work/bc/56f27a[-->] and you'll find the VCF with the multiallelic variants splitted.
+
+Go to /work/33/a6c930[-->] and you'll find all the intermediate files created during the sample QC.
+
+Go to /work/c7/065171[-->] for the final files of the pipeline. 
+
+**Recomendation:** Use at least the argument `-with-report report.html`, this will always show you the folders where the files have been saved.
+
+
+
+ 
+---
+💡 **HTML report and timeline**
 
 ```
 nextflow run main.nf -with-report report.html -with-timeline timeline.html
@@ -244,58 +362,8 @@ This command will automatically generate two reports, report.html and timeline.h
 - Retries/restarts and durations
 
 
-## Outputs 
-
-After a successful execution, you'll find inside the */work* folder:
-
-**Intermediate outputs**
-
-- Indexed VCFs (.tbi)
-
-- Split multiallelic VCFs
-
-- Masked genotypes VCFs
-
-- Variant-filtered and masked genotypes VCFs
-
-- Variant and Sample-filtered with masked genotypes VCFs
-
-- sample-qc-fails.tsv file with the samples deleted and which filter step failed
-
-**Final output**
-
-* *input_vcf_baseName*.vcf.gz (TODO: make the name the same as the original VCF with -AF_recalc) → fully filtered VCF with allele frequency annotations and witout sample level information. 
-
-- *input_vcf_baseName*.vcf.gz.tbi → index for the final VCF.
-
-- In `$output_stats` there will be a log file with information about each step of the pipeline run per file. 
-
-
 ---
-💡 **How to find the files inside the /work folder?**
-
-Example a of nextflow output: 
-
-```
-[34/34b365] process > INDEX_VCF (test.vcf.bgz)                                           [100%] 1 of 1 ✔
-[bc/56f27a] process > SPLIT_MULTIALLELIC (test.vcf.bgz)                                  [100%] 1 of 1 ✔
-[46/bf10e7] process > GENOTYPE_QC (test_split-multiallelic.vcf.bgz)                      [100%] 1 of 1 ✔
-[88/8b101c] process > VARIANT_QC (test_split-multiallelic-masked.vcf.gz)                 [100%] 1 of 1 ✔
-[33/a6c930] process > SAMPLE_QC (test_split-multiallelic-masked-filtered.vcf.gz)         [100%] 1 of 1 ✔
-[c7/065171] process > ADD_AF (test_split-multiallelic-masked-filtered.sample_qc.vcf.bgz) [100%] 1 of 1 ✔
-```
-
-The intermediate files are saved inside the nextflow folder for each step. 
-
-Go to /work/bc/56f27a[-->] and you'll find the VCF with the multiallelic variants splitted.
-
-Go to /work/33/a6c930[-->] and you'll find all the intermediate files created during the sample QC.
-
-Go to /work/c7/065171[-->] for the final files of the pipeline. 
-
-**Recomendation:** Use at least the argument `-with-report report.html`, this will always show you the folders where the files have been saved.
-
-## How to generate metadata for the samples
+💡 **How to generate metadata for the samples**
 
 Three categories of metadata are required per sample to accurately calculate allele frequencies: sex, ancestry, and relatedness. If you don't have this metadata available there are several tools that can infer it using the genomic data. 
 

@@ -1,0 +1,17 @@
+services:
+  af_bcftools_pipeline:
+    image: af_bcftools_pipeline:latest
+
+    container_name: af_bcftools_pipeline
+
+    volumes:
+      - ./input:/data/input:ro
+      - ./output:/data/output
+      - ./work:/data/work
+
+    environment:
+      - NXF_HOME=/data/work/.nextflow
+    
+    entrypoint: ["nextflow"]
+
+    command: ["run", "/pipeline/main.nf", "-c", "/pipeline/nextflow.config", "-work-dir", "/data/work", "-resume", "-with-report", "/data/output/report.html", "-with-timeline", "/data/output/timeline.html"]
