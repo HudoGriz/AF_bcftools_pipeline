@@ -575,8 +575,6 @@ process SAMPLE_QC {
       }
     ' sample-qc-stats.txt
 
-
-
     echo "QC filtering done." >> "${log_file}"
     echo "- Failing samples: sample-qc-fails.tsv" >> "${log_file}"
     echo "- Passing samples: sample-keep.txt" >> "${log_file}"
@@ -680,9 +678,10 @@ process FIX_PLOIDY {
     n_females=\$(awk '\$2=="F"' gender.txt | wc -l)
     
     {
-      echo "  Total samples: \$n_samples"
+      echo "  Total samples in metadata file: \$n_samples"
       echo "  Males: \$n_males"
       echo "  Females: \$n_females"
+      echo "  Only samples that passed the QC will be used for the groupings "
       echo ""
       echo "Example gender assignments:"
       head -n 5 gender.txt
@@ -704,6 +703,8 @@ process FIX_PLOIDY {
       echo "  Males will have haploid genotypes (0 or 1) on X and Y"
       echo "  Females will have diploid genotypes (0/0, 0/1, 1/1) on X"
     } >> "${log_file}"
+
+   
     """
 }
 
