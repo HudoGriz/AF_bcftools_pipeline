@@ -1,6 +1,3 @@
-// Ensure the output dir exists (Groovy)
-file(params.output).mkdirs()
-
 // =====================
 // Process: INDEX_VCF
 // Purpose: Ensure each input VCF has a .tbi index and write a header + quick stats to a shared log file.
@@ -19,19 +16,18 @@ file(params.output).mkdirs()
 
 process INDEX_VCF {
     tag "$vcf"
+    publishDir "${params.output}", mode: 'copy', pattern: "*.log"
 
     input:
-    tuple path(vcf), val(has_index), path(vcf_idx), val(log_file)
+    tuple path(vcf), val(has_index), path(vcf_idx)
 
     output:
-    tuple path(vcf), path("${vcf}.tbi"), val(log_file)
-
-    debug true
+    tuple path(vcf), path("${vcf}.tbi"), path("${vcf.simpleName}.log")
 
     script:
+    def log_name = "${vcf.simpleName}.log"
     if (has_index) {
         """
-        touch "${log_file}"
         nvariant="\$(bcftools index -n ${vcf})"
         nsample="\$(bcftools query -l ${vcf} | wc -l)"
         ngenotypes="\$(( nsample * nvariant ))"
@@ -48,13 +44,12 @@ process INDEX_VCF {
             echo "Sample Number: \$nsample"
             echo "Genotype Number: \$ngenotypes"
             echo ""
-        } > "${log_file}"
+        } > "${log_name}"
         """
     } else {
         """
         set -euo pipefail
-        touch "${log_file}"
-        echo "✗ No index found for ${vcf} — creating..." >> "${log_file}"
+        echo "✗ No index found for ${vcf} — creating..." > "${log_name}"
         tabix -p vcf "${vcf}"
         nvariant="\$(bcftools index -n ${vcf})"
         nsample="\$(bcftools query -l ${vcf} | wc -l)"
@@ -70,7 +65,7 @@ process INDEX_VCF {
           echo "Variant Number: \$nvariant"
           echo "Sample Number: \$nsample"
           echo "Genotype Number: \$ngenotypes"
-        } > "${log_file}"
+        } >> "${log_name}"
         """
     }
 }
@@ -79,32 +74,35 @@ process INDEX_VCF {
 // Process: SPLIT_MULTIALLELIC
 // Purpose: Split multiallelic variants into separate lines (one ALT per record), reindex, and log summary.
 // Inputs:
-//   - vcf, tbi  : the (already indexed) VCF and its index
-//   - log_file  : log path (value) to append progress
+//   - vcf, tbi, log : the (already indexed) VCF, its index, and the log file from previous step
 // Outputs:
 //   - <name>_split-multiallelic.vcf.gz      : split VCF (bgzipped)
 //   - <name>_split-multiallelic.vcf.gz.tbi  : tabix index for the split VCF
-//   - log_file  : same log value passed through
+//   - log file updated with split info
 
 process SPLIT_MULTIALLELIC {
     tag "$vcf"
+    publishDir "${params.output}", mode: 'copy', pattern: "*.log"
 
     input:
-    tuple path(vcf), path(tbi), val(log_file)
+    tuple path(vcf), path(tbi), path(log)
 
     output:
     tuple path("${vcf.simpleName}_split-multiallelic.vcf.gz"),
           path("${vcf.simpleName}_split-multiallelic.vcf.gz.tbi"),
-          val(log_file)
+          path("${log.simpleName}.log")
 
-    debug true
     script:
     """
     set -euo pipefail
+    
+    # Copy existing log
+    cp ${log} ${log.simpleName}.log
+    
     {
       echo ""
       echo "=== Splitting multiallelic variants for ${vcf} ==="
-    } >> "${log_file}"
+    } >> "${log.simpleName}.log"
 
     # bcftools norm -m -any: split multi-allelic records into multiple lines (one ALT allele per line)
     bcftools norm -m -any "${vcf}" -Oz -o "${vcf.simpleName}_split-multiallelic.vcf.gz"
@@ -114,7 +112,7 @@ process SPLIT_MULTIALLELIC {
       echo "✓ Split + index done"
       echo "Output: ${vcf.simpleName}_split-multiallelic.vcf.gz"
       echo "Variants now: \$(bcftools index -n "${vcf.simpleName}_split-multiallelic.vcf.gz")"
-    } >> "${log_file}"
+    } >> "${log.simpleName}.log"
     """
 }
 
@@ -122,11 +120,11 @@ process SPLIT_MULTIALLELIC {
 // Process: GENOTYPE_QC
 // Goal: Mask low‑quality per‑genotype calls to missing (./.) using FORMAT-based rules.
 // Inputs:
-//   - vcf, tbi : indexed input VCF
-//   - log_file : path (value) to append progress & decisions
+//   - vcf, tbi, log : indexed input VCF and log file from previous step
 // Outputs:
 //   - <name>-GTmasked.vcf.gz(.tbi) : same variants, but per‑genotype GT set to ./.
 //     when any QC rule fails
+//   - updated log file
 // Notes:
 //   - Uses bcftools +setGT plugin with a per‑genotype expression (-e).
 //   - Rules are auto-enabled only if the corresponding FORMAT field exists in the VCF header.
@@ -134,20 +132,24 @@ process SPLIT_MULTIALLELIC {
 
 process GENOTYPE_QC {
     tag "$vcf"
+    publishDir "${params.output}", mode: 'copy', pattern: "*.log"
 
     input:
-    tuple path(vcf), path(tbi), val(log_file)
+    tuple path(vcf), path(tbi), path(log)
 
     output:
     tuple path("${vcf.simpleName}-GTmasked.vcf.gz"),
           path("${vcf.simpleName}-GTmasked.vcf.gz.tbi"),
-          val(log_file)
+          path("*.log")
 
-    debug true
     script:
+    def base_name = vcf.simpleName.replaceAll(/_split-multiallelic$/, '')
     """
     set -euo pipefail
 
+    # Copy existing log
+    cp ${log} ${base_name}.log
+    
     VCF_IN="${vcf}"
     VCF_OUT="${vcf.simpleName}-GTmasked.vcf.gz"
     OP="||"
@@ -167,16 +169,16 @@ process GENOTYPE_QC {
     {
       echo ""
       echo "=== GENOTYPE_QC on: \$VCF_IN ==="
-    } >> "${log_file}"
+    } >> "${base_name}.log"
     
     # Build the final mask expression only with tags present in the header
     gt_expr_parts=()
     for tag in "\${!gt_conditions[@]}"; do
       if bcftools view -h "\$VCF_IN" | grep -q "^##FORMAT=<ID=\${tag},"; then
-        echo "✓ \${tag} (FORMAT) found — adding rule" >> "${log_file}"
+        echo "✓ \${tag} (FORMAT) found — adding rule" >> "${base_name}.log"
         gt_expr_parts+=("\${gt_conditions[\$tag]}")
       else
-        echo "x \${tag} (FORMAT) not found — skipping" >> "${log_file}"
+        echo "x \${tag} (FORMAT) not found — skipping" >> "${base_name}.log"
       fi
     done
 
@@ -185,7 +187,7 @@ process GENOTYPE_QC {
     if (( \${#gt_expr_parts[@]} == 0 )); then
       {
         echo "x No FORMAT-based rules available; no masking performed."
-      } >> "${log_file}"
+      } >> "${base_name}.log"
       cp -f "\$VCF_IN" "\$VCF_OUT"
       cp -f "\${VCF_IN}.tbi" "\${VCF_OUT}.tbi" 2>/dev/null || tabix -p vcf "\$VCF_OUT"
       exit 0
@@ -199,7 +201,7 @@ process GENOTYPE_QC {
       echo "Final per-genotype mask expression:"
       echo "\$gt_expr"
       echo "Running bcftools +setGT (mask to ./.)"
-    } >> "${log_file}"
+    } >> "${base_name}.log"
 
     # Mask failing genotypes to ./.
     # -t q : expression applies per-sample/per-genotype (FORMAT context)
@@ -212,7 +214,7 @@ process GENOTYPE_QC {
     {
       echo "✓ Genotype masking complete."
       echo "Output: \$VCF_OUT"
-    } >> "${log_file}"
+    } >> "${base_name}.log"
     """
 }
 
@@ -222,29 +224,33 @@ process GENOTYPE_QC {
 // Strategy: Build a site-level boolean expression; `bcftools view -e <expr>`
 //           EXCLUDES variants where the expression is TRUE.
 // Inputs:
-//   - vcf, tbi  : indexed input VCF
-//   - log_file  : path (value) to append progress & decisions
+//   - vcf, tbi, log : indexed input VCF and log file from previous step
 // Outputs:
 //   - <name>-variantQC.vcf.gz(.tbi) : VCF containing only variants that pass all active rules
+//   - updated log file
 // Notes:
 //   - An INFO rule is added only if that tag exists in the header (robust to missing annotations).
 //   - By default we OR the rules (fail if ANY rule is true). Switch OP to "&&" to require ALL.
 
 process VARIANT_QC {
     tag "$vcf"
+    publishDir "${params.output}", mode: 'copy', pattern: "*.log"
 
     input:
-    tuple path(vcf), path(tbi), val(log_file)
+    tuple path(vcf), path(tbi), path(log)
 
     output:
     tuple path("${vcf.simpleName}-variantQC.vcf.gz"),
           path("${vcf.simpleName}-variantQC.vcf.gz.tbi"),
-          val(log_file)
+          path("*.log")
 
-    debug true
     script:
+    def base_name = vcf.simpleName.replaceAll(/_split-multiallelic-GTmasked$/, '')
     """
     set -euo pipefail
+
+    # Copy existing log
+    cp ${log} ${base_name}.log
 
     VCF_IN="${vcf}"
     VCF_OUT="${vcf.simpleName}-variantQC.vcf.gz"
@@ -270,18 +276,18 @@ process VARIANT_QC {
     {
       echo ""
       echo "=== VARIANT_QC on: \$VCF_IN ==="
-    } >> "${log_file}"
+    } >> "${base_name}.log"
 
     expr_parts=("QUAL < ${params.qc.variant.qual_threshold}") # Always include QUAL threshold (QUAL is a core VCF field, not in INFO)
-    echo "✓ QUAL — adding: QUAL < ${params.qc.variant.qual_threshold}" >> "${log_file}"
+    echo "✓ QUAL — adding: QUAL < ${params.qc.variant.qual_threshold}" >> "${base_name}.log"
 
     # Add INFO-based rules only if that tag exists
     for tag in "\${!site_conditions[@]}"; do
       if has_info "\$VCF_IN" "\$tag"; then
-        echo "✓ \$tag (INFO) found — adding: \${site_conditions[\$tag]}" >> "${log_file}"
+        echo "✓ \$tag (INFO) found — adding: \${site_conditions[\$tag]}" >> "${base_name}.log"
         expr_parts+=("\${site_conditions[\$tag]}")
       else
-        echo "x \$tag (INFO) not found — skipping" >> "${log_file}"
+        echo "x \$tag (INFO) not found — skipping" >> "${base_name}.log"
       fi
     done
 
@@ -292,7 +298,7 @@ process VARIANT_QC {
       echo ""
       echo "Final filter expression:"
       echo "\$expr_str"
-    } >> "${log_file}"
+    } >> "${base_name}.log"
 
     # HARD FILTER: remove variants where expr is TRUE
     bcftools view -e "\$expr_str" "\$VCF_IN" -Oz -o "\$VCF_OUT"
@@ -303,7 +309,7 @@ process VARIANT_QC {
       echo ""
       echo "✓ Filtering complete. Output: \$VCF_OUT"
       echo "Removed: \$(( before_count - after_count ))"
-    } >> "${log_file}"
+    } >> "${base_name}.log"
     """
 }
 
@@ -332,22 +338,26 @@ process VARIANT_QC {
 
 process SAMPLE_QC {
     tag "$vcf"
+    publishDir "${params.output}", mode: 'copy', pattern: "*.log"
 
     input:
-    tuple path(vcf), path(tbi), val(log_file)
+    tuple path(vcf), path(tbi), path(log)
     val sceVCF_path
     val seq_type
 
     output:
     tuple path("${vcf.simpleName}-sampleQC.vcf.gz"),
           path("${vcf.simpleName}-sampleQC.vcf.gz.tbi"),
-          val(log_file)
+          path("*.log")
 
-    debug true
     script:
+    def base_name = vcf.simpleName.replaceAll(/_split-multiallelic-GTmasked-variantQC$/, '')
     """
     # Fail fast + propagate errors in pipelines
     set -euo pipefail
+
+    # Copy existing log
+    cp ${log} ${base_name}.log
 
     INPUT_VCF="${vcf}"
     OUTPUT_VCF="${vcf.simpleName}-sampleQC.vcf.gz"
@@ -358,7 +368,7 @@ process SAMPLE_QC {
     {
       echo ""
       echo "=== SAMPLE_QC on: \$INPUT_VCF ==="
-    } >> "${log_file}"
+    } >> "${base_name}.log"
 
     # -----------------------------
     # Choose thresholds by seq type
@@ -369,18 +379,18 @@ process SAMPLE_QC {
       CALL_RATE_THRESHOLD=${params.qc.sample.wgs.call_rate_threshold}
       SINGLETONS_THRESHOLD=${params.qc.sample.wgs.singletons_threshold}
       CONTAM_THRESHOLD=${params.qc.sample.wgs.contamination_threshold}
-      echo "✓ Seq type: WGS thresholds applied" >> "${log_file}"
+      echo "✓ Seq type: WGS thresholds applied" >> "${base_name}.log"
     else
       COV_THRESHOLD=${params.qc.sample.wes.coverage_threshold}
       HET_HOM_THRESHOLD=${params.qc.sample.wes.het_hom_threshold}
       CALL_RATE_THRESHOLD=${params.qc.sample.wes.call_rate_threshold}
       SINGLETONS_THRESHOLD=${params.qc.sample.wes.singletons_threshold}
       CONTAM_THRESHOLD=${params.qc.sample.wes.contamination_threshold}
-      echo "✓ Seq type: WES thresholds applied" >> "${log_file}"
+      echo "✓ Seq type: WES thresholds applied" >> "${base_name}.log"
     fi
 
     # Generate bcftools stats for the input VCF
-    echo "Generating bcftools stats..." >> "${log_file}"
+    echo "Generating bcftools stats..." >> "${base_name}.log"
     bcftools query -l "\$INPUT_VCF" > list-of-samples.txt
     bcftools stats -S list-of-samples.txt "\$INPUT_VCF" > bcftools-stats.txt
 
@@ -390,14 +400,14 @@ process SAMPLE_QC {
 
 
     if [[ "\$DP_FOUND" -gt 0 ]]; then
-      echo "✓ DP format found - Performing coverage filtering" >> "${log_file}"
+      echo "✓ DP format found - Performing coverage filtering" >> "${base_name}.log"
     else
-      echo "x DP format NOT found - Coverage filtering NOT performed" >> "${log_file}"
+      echo "x DP format NOT found - Coverage filtering NOT performed" >> "${base_name}.log"
     fi
     if [[ "\$GT_FOUND" -gt 0 ]]; then
-      echo "✓ GT format found - Performing call rate, het/hom ratio and singleton filtering" >> "${log_file}"
+      echo "✓ GT format found - Performing call rate, het/hom ratio and singleton filtering" >> "${base_name}.log"
     else
-      echo "x GT format NOT found - Call rate, het/hom ratio and singleton filtering NOT performed" >> "${log_file}"
+      echo "x GT format NOT found - Call rate, het/hom ratio and singleton filtering NOT performed" >> "${base_name}.log"
     fi
 
     # 1) Extract SN + PSC sections from bcftools stats
@@ -457,7 +467,7 @@ process SAMPLE_QC {
         fi
 
         if [[ -n "\$SCE_CMD" ]]; then
-          echo "✓ sceVCF found (\$SCE_CMD) — running contamination check" >> "${log_file}"
+          echo "✓ sceVCF found (\$SCE_CMD) — running contamination check" >> "${base_name}.log"
           "\$SCE_CMD" -o "\$CHARR_TSV" "\$INPUT_VCF"
           awk -F'\t' -v OFS='\t' '
           FNR==NR {
@@ -482,13 +492,13 @@ process SAMPLE_QC {
         ' charr_full.tsv sample-qc-stats.txt > sample-qc-stats.txt.tmp && mv sample-qc-stats.txt.tmp sample-qc-stats.txt
 
         else
-          echo "x sceVCF not found or not executable at: ${sceVCF_path} — skipping" >> "${log_file}"
+          echo "x sceVCF not found or not executable at: ${sceVCF_path} — skipping" >> "${base_name}.log"
         fi
       else
-        echo "x Contamination check not running (sceVCF_path empty)" >> "${log_file}"
+        echo "x Contamination check not running (sceVCF_path empty)" >> "${base_name}.log"
       fi
     else
-      echo "x AD (FORMAT) not found — skipping contamination check (required for sceVCF)" >> "${log_file}"
+      echo "x AD (FORMAT) not found — skipping contamination check (required for sceVCF)" >> "${base_name}.log"
     fi
 
 
@@ -575,18 +585,18 @@ process SAMPLE_QC {
       }
     ' sample-qc-stats.txt
 
-    echo "QC filtering done." >> "${log_file}"
-    echo "- Failing samples: sample-qc-fails.tsv" >> "${log_file}"
-    echo "- Passing samples: sample-keep.txt" >> "${log_file}"
+    echo "QC filtering done." >> "${base_name}.log"
+    echo "- Failing samples: sample-qc-fails.tsv" >> "${base_name}.log"
+    echo "- Passing samples: sample-keep.txt" >> "${base_name}.log"
 
     # Filter VCF to keep only passing samples
     if [[ -s sample-keep.txt ]]; then
-        echo "Filtering VCF to keep passing samples..." >> "${log_file}"
+        echo "Filtering VCF to keep passing samples..." >> "${base_name}.log"
         bcftools view -S sample-keep.txt -Oz -o "\$OUTPUT_VCF" "\$INPUT_VCF"
         bcftools index -t "\$OUTPUT_VCF"
-        echo "✓ Filtered VCF created: \$OUTPUT_VCF" >> "${log_file}"
+        echo "✓ Filtered VCF created: \$OUTPUT_VCF" >> "${base_name}.log"
     else
-        echo "WARNING: No samples passed QC filters!" >> "${log_file}"
+        echo "WARNING: No samples passed QC filters!" >> "${base_name}.log"
         # Create empty VCF with just header
         bcftools view -h "\$INPUT_VCF" | bgzip > "\$OUTPUT_VCF"
         bcftools index -t "\$OUTPUT_VCF"
@@ -602,7 +612,7 @@ process SAMPLE_QC {
     echo "Variant Number: \$nvariants"
     echo "Sample Number: \$nsamples_qc"
     echo "Genotype Number: \$ngenotypes" 
-    } >> "${log_file}"
+    } >> "${base_name}.log"
     # Clean up temporary files
     rm -rf "\$TMP"
     
@@ -627,21 +637,25 @@ process SAMPLE_QC {
 
 process FIX_PLOIDY {
     tag "$vcf"
+    publishDir "${params.output}", mode: 'copy', pattern: "*.log"
     
     input:
-    tuple path(vcf), path(tbi), val(log_file)
+    tuple path(vcf), path(tbi), path(log)
     path metadata_csv
     path ploidy_rules
 
     output:
     tuple path("${vcf.simpleName}-ploidy_fixed.vcf.gz"),
           path("${vcf.simpleName}-ploidy_fixed.vcf.gz.tbi"),
-          val(log_file)
+          path("*.log")
 
-    debug true
     script:
+    def base_name = vcf.simpleName.replaceAll(/_split-multiallelic-GTmasked-variantQC-sampleQC$/, '')
     """
     set -euo pipefail
+
+    # Copy existing log
+    cp ${log} ${base_name}.log
 
     INPUT_VCF="${vcf}"
     OUTPUT_VCF="${vcf.simpleName}-ploidy_fixed.vcf.gz"
@@ -649,7 +663,7 @@ process FIX_PLOIDY {
     {
       echo ""
       echo "=== FIX_PLOIDY: Creating gender.txt from metadata ==="
-    } >> "${log_file}"
+    } >> "${base_name}.log"
 
     # Create gender.txt file: sample<TAB>sex
     # Convert M/F or 1/2 to M/F format for bcftools +fixploidy
@@ -670,7 +684,7 @@ process FIX_PLOIDY {
       if (sex != "") print sample "\\t" sex
     }' "${metadata_csv}" > gender.txt
 
-    echo "✓ Gender file created" >> "${log_file}"
+    echo "✓ Gender file created" >> "${base_name}.log"
     
     # Show sample count
     n_samples=\$(wc -l < gender.txt)
@@ -687,7 +701,7 @@ process FIX_PLOIDY {
       head -n 5 gender.txt
       echo ""
       echo "=== Fixing ploidy for X/Y chromosomes ==="
-    } >> "${log_file}"
+    } >> "${base_name}.log"
 
     # Fix ploidy 
     # If GRCh37, ploidy_cmd points to the provided rules for GRCh37
@@ -702,7 +716,7 @@ process FIX_PLOIDY {
       echo "  Output: \$OUTPUT_VCF"
       echo "  Males will have haploid genotypes (0 or 1) on X and Y"
       echo "  Females will have diploid genotypes (0/0, 0/1, 1/1) on X"
-    } >> "${log_file}"
+    } >> "${base_name}.log"
 
    
     """
@@ -732,20 +746,24 @@ process FIX_PLOIDY {
 process ADD_AF {
     tag "$vcf"
     publishDir "${params.output}", mode: 'move', pattern: "*-AF_recalc.vcf.gz*"
+    publishDir "${params.output}", mode: 'copy', pattern: "*.log"
     
     input:
-    tuple path(vcf), path(tbi), val(log_file)
+    tuple path(vcf), path(tbi), path(log)
     path metadata_csv
 
     output:
     tuple path("${vcf.simpleName}-AF_recalc.vcf.gz"),
           path("${vcf.simpleName}-AF_recalc.vcf.gz.tbi"),
-          val(log_file)
+          path("*.log")
 
-    debug true
     script:
+    def base_name = vcf.simpleName.replaceAll(/_split-multiallelic-GTmasked-variantQC-sampleQC-ploidy_fixed$/, '')
     """
     set -euo pipefail
+
+    # Copy existing log
+    cp ${log} ${base_name}.log
 
     INPUT_VCF="${vcf}"
     OUTPUT_VCF="${vcf.simpleName}-AF_recalc.vcf.gz"
@@ -753,7 +771,7 @@ process ADD_AF {
     {
       echo ""
       echo "=== AF recalculating: Creating groups.txt from metadata ==="
-    } >> "${log_file}"
+    } >> "${base_name}.log"
 
     # Build groups file for bcftools +fill-tags:
     #   <sample> <TAB> <group1,group2,...>
@@ -803,18 +821,18 @@ process ADD_AF {
       print sample "\\t" groups
     }' "${metadata_csv}" > groups.txt
 
-    echo "✓ Groups file created with ancestry, sex, and ancestry+sex combinations" >> "${log_file}"
+    echo "✓ Groups file created with ancestry, sex, and ancestry+sex combinations" >> "${base_name}.log"
     
     # Show a few example lines for verification
     {
       echo "Example group assignments:"
       head -n 5 groups.txt
-    } >> "${log_file}"
+    } >> "${base_name}.log"
 
     {
       echo ""
       echo "=== Adding stratified allele frequencies to VCF (dropping all FORMAT/GT columns) ==="
-    } >> "${log_file}"
+    } >> "${base_name}.log"
 
     # Recalculate AF/AC/AN (and other tags) across:
     #   - All samples (default)
@@ -838,22 +856,24 @@ process ADD_AF {
       echo "  - By sex: AF_MALE, AF_FEMALE, AC_MALE, AC_FEMALE, AN_MALE, AN_FEMALE"
       echo "  - By ancestry: AF_EUR, AF_AFR, etc."
       echo "  - By ancestry+sex: AF_EUR_MALE, AF_EUR_FEMALE, etc."
-    } >> "${log_file}"
+    } >> "${base_name}.log"
     """
 }
 
 
 
 workflow {
+    // Ensure the output directory exists
+    file(params.output).mkdirs()
+
     // Channel: all .vcf.gz in params.input 
     vcf_ch = Channel.fromPath("${params.input}/*.vcf.gz", checkIfExists: true)
         .map { vcf ->
             def tbi = file("${vcf}.tbi")
-            def log_file = "${params.output}/${vcf.simpleName}.log"
             if (tbi.exists()) {
-                tuple(vcf, true, tbi, log_file)
+                tuple(vcf, true, tbi)
             } else {
-                tuple(vcf, false, file("NO_FILE"), log_file)
+                tuple(vcf, false, file("NO_FILE"))
             }
         }
 
@@ -885,6 +905,6 @@ workflow {
     // Fix ploidy for X/Y chromosomes before AF calculation
     ploidy_fixed = FIX_PLOIDY(sample_qc, metadata_ch, ploidy_file)
     
-    // Add AF annotations
-    af_annotated = ADD_AF(ploidy_fixed, metadata_ch)
+    // Add AF annotations (final output published by ADD_AF process)
+    ADD_AF(ploidy_fixed, metadata_ch)
 }
