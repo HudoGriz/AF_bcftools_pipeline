@@ -1,0 +1,148 @@
+Nextflow 25.10.3 is available - Please consider updating your version to it
+
+ N E X T F L O W   ~  version 25.04.7
+
+Launching `main.nf` [stupefied_nobel] DSL2 - revision: c94ceccb10
+
+[-        ] INDEX_VCF          -
+[-        ] SPLIT_MULTIALLELIC -
+[-        ] GENOTYPE_QC        -
+[-        ] VARIANT_QC         -
+[-        ] SAMPLE_QC          -
+
+[-        ] INDEX_VCF          -
+[-        ] SPLIT_MULTIALLELIC -
+[-        ] GENOTYPE_QC        -
+[-        ] VARIANT_QC         -
+[-        ] SAMPLE_QC          -
+[-        ] FIX_PLOIDY         -
+[-        ] ADD_AF             -
+
+executor >  local (1)
+[7b/b25c5e] IND…c-pop12_sub1_chr21.vcf.gz) | 0 of 1
+[-        ] SPLIT_MULTIALLELIC             -
+[-        ] GENOTYPE_QC                    -
+[-        ] VARIANT_QC                     -
+[-        ] SAMPLE_QC                      -
+[-        ] FIX_PLOIDY                     -
+[-        ] ADD_AF                         -
+
+executor >  local (1)
+[7b/b25c5e] IND…c-pop12_sub1_chr21.vcf.gz) | 0 of 1
+[-        ] SPLIT_MULTIALLELIC             -
+[-        ] GENOTYPE_QC                    -
+[-        ] VARIANT_QC                     -
+[-        ] SAMPLE_QC                      -
+[-        ] FIX_PLOIDY                     -
+[-        ] ADD_AF                         -
+
+executor >  local (1)
+[7b/b25c5e] IND…c-pop12_sub1_chr21.vcf.gz) | 0 of 1
+[-        ] SPLIT_MULTIALLELIC             -
+[-        ] GENOTYPE_QC                    -
+[-        ] VARIANT_QC                     -
+[-        ] SAMPLE_QC                      -
+[-        ] FIX_PLOIDY                     -
+[-        ] ADD_AF                         -
+ERROR ~ Error executing process > 'INDEX_VCF (subset-recalc-pop12_sub1_chr21.vcf.gz)'
+
+Caused by:
+  Process `INDEX_VCF (subset-recalc-pop12_sub1_chr21.vcf.gz)` terminated with an error exit status (126)
+
+
+Command executed:
+
+  set -euo pipefail
+  echo "✗ No index found for subset-recalc-pop12_sub1_chr21.vcf.gz — creating..." > "subset-recalc-pop12_sub1_chr21.log"
+  tabix -p vcf "subset-recalc-pop12_sub1_chr21.vcf.gz"
+  nvariant="$(bcftools index -n subset-recalc-pop12_sub1_chr21.vcf.gz)"
+  nsample="$(bcftools query -l subset-recalc-pop12_sub1_chr21.vcf.gz | wc -l)"
+  ngenotypes="$(( nsample * nvariant ))"
+  {
+    echo " === EGA BCFTools Pipeline ==="
+    echo "Developed by: Mireia Marin Ginestar (mireia.marin@crg.eu)"
+    echo "version 3.0.0"
+    echo ""
+    echo "✓ Index created for subset-recalc-pop12_sub1_chr21.vcf.gz"
+    echo ""
+    echo " === ORIGINAL STATISTICS === "
+    echo "Variant Number: $nvariant"
+    echo "Sample Number: $nsample"
+    echo "Genotype Number: $ngenotypes"
+  } >> "subset-recalc-pop12_sub1_chr21.log"
+
+Command exit status:
+  126
+
+Command output:
+  (empty)
+
+Command error:
+  docker: permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: Head "http://%2Fvar%2Frun%2Fdocker.sock/_ping": dial unix /var/run/docker.sock: connect: permission denied.
+  See 'docker run --help'.
+
+Work dir:
+  /home/user/AF_bcftools_pipeline/work/7b/b25c5e6027b6890817034d848fe487
+
+Container:
+  community.wave.seqera.io/library/bcftools_htslib:1.19--9b5a758cabf8d035
+
+Tip: when you have fixed the problem you can continue the execution adding the option `-resume` to the run command line
+
+ -- Check '.nextflow.log' file for details
+
+executor >  local (1)
+[7b/b25c5e] IND…c-pop12_sub1_chr21.vcf.gz) | 0 of 1 ✘
+[-        ] SPLIT_MULTIALLELIC             -
+[-        ] GENOTYPE_QC                    -
+[-        ] VARIANT_QC                     -
+[-        ] SAMPLE_QC                      -
+[-        ] FIX_PLOIDY                     -
+[-        ] ADD_AF                         -
+ERROR ~ Error executing process > 'INDEX_VCF (subset-recalc-pop12_sub1_chr21.vcf.gz)'
+
+Caused by:
+  Process `INDEX_VCF (subset-recalc-pop12_sub1_chr21.vcf.gz)` terminated with an error exit status (126)
+
+
+Command executed:
+
+  set -euo pipefail
+  echo "✗ No index found for subset-recalc-pop12_sub1_chr21.vcf.gz — creating..." > "subset-recalc-pop12_sub1_chr21.log"
+  tabix -p vcf "subset-recalc-pop12_sub1_chr21.vcf.gz"
+  nvariant="$(bcftools index -n subset-recalc-pop12_sub1_chr21.vcf.gz)"
+  nsample="$(bcftools query -l subset-recalc-pop12_sub1_chr21.vcf.gz | wc -l)"
+  ngenotypes="$(( nsample * nvariant ))"
+  {
+    echo " === EGA BCFTools Pipeline ==="
+    echo "Developed by: Mireia Marin Ginestar (mireia.marin@crg.eu)"
+    echo "version 3.0.0"
+    echo ""
+    echo "✓ Index created for subset-recalc-pop12_sub1_chr21.vcf.gz"
+    echo ""
+    echo " === ORIGINAL STATISTICS === "
+    echo "Variant Number: $nvariant"
+    echo "Sample Number: $nsample"
+    echo "Genotype Number: $ngenotypes"
+  } >> "subset-recalc-pop12_sub1_chr21.log"
+
+Command exit status:
+  126
+
+Command output:
+  (empty)
+
+Command error:
+  docker: permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: Head "http://%2Fvar%2Frun%2Fdocker.sock/_ping": dial unix /var/run/docker.sock: connect: permission denied.
+  See 'docker run --help'.
+
+Work dir:
+  /home/user/AF_bcftools_pipeline/work/7b/b25c5e6027b6890817034d848fe487
+
+Container:
+  community.wave.seqera.io/library/bcftools_htslib:1.19--9b5a758cabf8d035
+
+Tip: when you have fixed the problem you can continue the execution adding the option `-resume` to the run command line
+
+ -- Check '.nextflow.log' file for details
+

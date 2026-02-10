@@ -1,0 +1,2 @@
+task_id	hash	native_id	name	status	exit	submit	duration	realtime	%cpu	peak_rss	peak_vmem	rchar	wchar
+1	c1/b59686	1572	INDEX_VCF (subset-recalc-pop12_sub1_chr21.vcf.gz)	FAILED	127	2026-02-10 11:47:55.179	111ms	41ms	-	-	-	-	-
