@@ -1,6 +1,3 @@
-// Ensure the output dir exists (Groovy)
-file(params.output).mkdirs()
-
 // =====================
 // Process: INDEX_VCF
 // Purpose: Ensure each input VCF has a .tbi index and write a header + quick stats to a shared log file.
@@ -19,14 +16,13 @@ file(params.output).mkdirs()
 
 process INDEX_VCF {
     tag "$vcf"
+    debug true
 
     input:
     tuple path(vcf), val(has_index), path(vcf_idx), val(log_file)
 
     output:
     tuple path(vcf), path("${vcf}.tbi"), val(log_file)
-
-    debug true
 
     script:
     if (has_index) {
@@ -88,6 +84,7 @@ process INDEX_VCF {
 
 process SPLIT_MULTIALLELIC {
     tag "$vcf"
+    debug true
 
     input:
     tuple path(vcf), path(tbi), val(log_file)
@@ -97,7 +94,6 @@ process SPLIT_MULTIALLELIC {
           path("${vcf.simpleName}_split-multiallelic.vcf.gz.tbi"),
           val(log_file)
 
-    debug true
     script:
     """
     set -euo pipefail
@@ -134,6 +130,7 @@ process SPLIT_MULTIALLELIC {
 
 process GENOTYPE_QC {
     tag "$vcf"
+    debug true
 
     input:
     tuple path(vcf), path(tbi), val(log_file)
@@ -143,7 +140,6 @@ process GENOTYPE_QC {
           path("${vcf.simpleName}-GTmasked.vcf.gz.tbi"),
           val(log_file)
 
-    debug true
     script:
     """
     set -euo pipefail
@@ -232,6 +228,7 @@ process GENOTYPE_QC {
 
 process VARIANT_QC {
     tag "$vcf"
+    debug true
 
     input:
     tuple path(vcf), path(tbi), val(log_file)
@@ -241,7 +238,6 @@ process VARIANT_QC {
           path("${vcf.simpleName}-variantQC.vcf.gz.tbi"),
           val(log_file)
 
-    debug true
     script:
     """
     set -euo pipefail
@@ -332,6 +328,7 @@ process VARIANT_QC {
 
 process SAMPLE_QC {
     tag "$vcf"
+    debug true
 
     input:
     tuple path(vcf), path(tbi), val(log_file)
@@ -343,7 +340,6 @@ process SAMPLE_QC {
           path("${vcf.simpleName}-sampleQC.vcf.gz.tbi"),
           val(log_file)
 
-    debug true
     script:
     """
     # Fail fast + propagate errors in pipelines
@@ -627,6 +623,7 @@ process SAMPLE_QC {
 
 process FIX_PLOIDY {
     tag "$vcf"
+    debug true
     
     input:
     tuple path(vcf), path(tbi), val(log_file)
@@ -638,7 +635,6 @@ process FIX_PLOIDY {
           path("${vcf.simpleName}-ploidy_fixed.vcf.gz.tbi"),
           val(log_file)
 
-    debug true
     script:
     """
     set -euo pipefail
@@ -731,6 +727,7 @@ process FIX_PLOIDY {
 
 process ADD_AF {
     tag "$vcf"
+    debug true
     publishDir "${params.output}", mode: 'move', pattern: "*-AF_recalc.vcf.gz*"
     
     input:
@@ -742,7 +739,6 @@ process ADD_AF {
           path("${vcf.simpleName}-AF_recalc.vcf.gz.tbi"),
           val(log_file)
 
-    debug true
     script:
     """
     set -euo pipefail
@@ -845,8 +841,11 @@ process ADD_AF {
 
 
 workflow {
+    // Ensure the output directory exists
+    file(params.output).mkdirs()
+    
     // Channel: all .vcf.gz in params.input 
-    vcf_ch = Channel.fromPath("${params.input}/*.vcf.gz", checkIfExists: true)
+    vcf_ch = channel.fromPath("${params.input}/*.vcf.gz", checkIfExists: true)
         .map { vcf ->
             def tbi = file("${vcf}.tbi")
             def log_file = "${params.output}/${vcf.simpleName}.log"
@@ -872,7 +871,7 @@ workflow {
 
     // Create metadata channel if provided
     if (params.metadata_csv) {
-        metadata_ch = Channel.fromPath(params.metadata_csv, checkIfExists: true)
+        metadata_ch = channel.fromPath(params.metadata_csv, checkIfExists: true)
     } else {
         error "ERROR: metadata_csv parameter is required for ADD_AF process"
     }
